@@ -182,6 +182,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         progress.done()
         if not args.quiet:
             print(_report_line(report))
+        for warning in report.warnings:
+            print(f"  warning: {warning}", file=sys.stderr)
 
     return 1 if failures else 0
 

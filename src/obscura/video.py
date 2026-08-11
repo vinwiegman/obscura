@@ -100,6 +100,35 @@ def has_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def probe_has_audio(path: Path) -> bool:
+    """True when the source is *known* to carry audio.
+
+    OpenCV cannot see audio streams at all, so this shells out to ffprobe and
+    returns False when ffprobe is missing. False therefore means "no audio, or
+    no way to tell" -- it is used to raise a warning, never to skip work.
+    """
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        return False
+    result = subprocess.run(
+        [
+            ffprobe,
+            "-loglevel",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
 def remux_audio(source: Path, silent: Path, destination: Path) -> bool:
     """Copy the audio track from ``source`` onto ``silent``.
 

@@ -79,6 +79,9 @@ pip install 'obscura[gpu]'    # NVIDIA CUDA
 Detection and tracking come from [uniface](https://github.com/yakhyo/uniface),
 which downloads ONNX weights on first run. Python 3.10+.
 
+`ffmpeg` is optional and only needed to preserve the source audio track
+(`--keep-audio`); the Docker image includes it.
+
 ## Usage
 
 Single file, defaults (RetinaFace, elliptical blur):
@@ -117,6 +120,7 @@ obscura run footage.mp4 -o leaky.mp4 --single-pass
 | `--lead` / `--trail` | `8` / `12` | Frames covered before the first and after the last detection. A face is detected once it turns far enough toward the camera — by then the earlier frames have already leaked. |
 | `--conf` | `0.5` | Deliberately lower than you would pick for recognition. A false positive costs a blurred patch of wall; a false negative costs a face. |
 | `--model` | `retinaface` | Also `scrfd`, `yolov5`, `yolov8`. |
+| `--keep-audio` | off | Remux the source audio onto the output. Needs ffmpeg; warns if it is missing rather than failing silently. |
 | `--single-pass` | off | Baseline mode. Leaks. |
 
 ### Web UI
@@ -144,7 +148,10 @@ Mount a volume at `/models` to keep downloaded weights between runs.
 ## Limitations
 
 - **Video only, audio dropped by default.** OpenCV writes no audio track. Pass
-  `--keep-audio` to remux the original with ffmpeg, if ffmpeg is installed.
+  `--keep-audio` to remux the original back on, which needs `ffmpeg` on PATH.
+  Without it the run warns rather than handing you a silent file and saying
+  nothing. When `ffprobe` is available the tool also warns if the source had
+  audio and you did not ask to keep it; without ffprobe it cannot tell.
 - **Faces only.** Gait, tattoos, licence plates, badges and lanyards all survive
   this tool. Faces are the easy part of anonymization, not the whole of it.
 - **Blur is not encryption.** Blur and pixelation are reversible in principle,

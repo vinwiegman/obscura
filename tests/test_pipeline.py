@@ -131,6 +131,54 @@ def test_process_writes_a_playable_video(clip, tmp_path):
         capture.release()
 
 
+def _run(clip, tmp_path, monkeypatch, **overrides):
+    from obscura import video as video_module
+
+    for name, value in overrides.pop("patches", {}).items():
+        monkeypatch.setattr(video_module, name, value)
+    cfg = RunConfig(style=RedactStyle(method="fill"), fourcc="MJPG", **overrides)
+    return process(
+        clip, tmp_path / "out.avi", cfg, detector=FlakyDetector(), tracker=IouTracker(TrackConfig())
+    )
+
+
+def test_keep_audio_without_ffmpeg_warns_instead_of_failing_quietly(clip, tmp_path, monkeypatch):
+    """Asking for audio and silently getting none is the worst possible outcome."""
+    report = _run(
+        clip, tmp_path, monkeypatch, keep_audio=True, patches={"has_ffmpeg": lambda: False}
+    )
+
+    assert report.output.exists()
+    assert any("ffmpeg" in w for w in report.warnings)
+
+
+def test_dropped_audio_is_reported_when_the_source_has_a_track(clip, tmp_path, monkeypatch):
+    report = _run(clip, tmp_path, monkeypatch, patches={"probe_has_audio": lambda _: True})
+
+    assert any("--keep-audio" in w for w in report.warnings)
+
+
+def test_silent_source_produces_no_audio_warning(clip, tmp_path, monkeypatch):
+    report = _run(clip, tmp_path, monkeypatch, patches={"probe_has_audio": lambda _: False})
+
+    assert report.warnings == []
+
+
+def test_failed_remux_keeps_the_video_and_warns(clip, tmp_path, monkeypatch):
+    """A remux that fails must still leave a usable, silent video behind."""
+    report = _run(
+        clip,
+        tmp_path,
+        monkeypatch,
+        keep_audio=True,
+        patches={"has_ffmpeg": lambda: True, "remux_audio": lambda *a: False},
+    )
+
+    assert report.output.exists()
+    assert not report.output.with_name("out.silent.avi").exists()
+    assert any("could not copy the audio" in w for w in report.warnings)
+
+
 def test_single_pass_config_skips_healing(scanned):
     cfg = RunConfig(single_pass=True, heal=HealConfig(margin=0.0, top_extra=0.0))
 

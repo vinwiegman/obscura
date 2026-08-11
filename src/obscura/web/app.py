@@ -69,6 +69,7 @@ async def create_job(
     shape: str = Form("ellipse"),
     margin: float = Form(0.18),
     strength: float = Form(0.35),
+    keep_audio: bool = Form(False),
 ) -> dict:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in VIDEO_SUFFIXES:
@@ -101,6 +102,7 @@ async def create_job(
         detect=DetectConfig(),
         heal=HealConfig(margin=margin),
         style=RedactStyle(method=method, shape=shape, strength=strength),
+        keep_audio=keep_audio,
     )
     _pool.submit(_run, job, cfg)
     return job.as_dict()
@@ -161,5 +163,6 @@ def _run(job: Job, cfg: RunConfig) -> None:
         "redactions": report.n_redactions,
         "healed": report.n_redactions - report.n_detections,
         "fps": round(report.fps, 1),
+        "warnings": report.warnings,
     }
     job.status = "done"

@@ -13,6 +13,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
 
 from . import redact, video
@@ -55,6 +56,8 @@ class RunReport:
 
     scan_seconds: float
     render_seconds: float
+    warnings: list[str] = dc_field(default_factory=list)
+    """Things that silently degraded the output, most often a dropped audio track."""
 
     @property
     def fps(self) -> float:
@@ -133,20 +136,35 @@ def process(
 
     index = build_index(result, cfg)
 
-    started = time.perf_counter()
+    warnings: list[str] = []
     target = destination
     silent = destination
-    if cfg.keep_audio and video.has_ffmpeg():
-        silent = destination.with_name(f"{destination.stem}.silent{destination.suffix}")
+    remuxing = False
 
+    if cfg.keep_audio:
+        if video.has_ffmpeg():
+            remuxing = True
+            silent = destination.with_name(f"{destination.stem}.silent{destination.suffix}")
+        else:
+            # Asking for audio and silently getting none is the worst outcome:
+            # the file looks finished and the loss is only noticed on playback.
+            warnings.append("--keep-audio needs ffmpeg on PATH; the output has no audio track.")
+    elif video.probe_has_audio(source):
+        warnings.append("Source has an audio track; the output does not. Use --keep-audio.")
+
+    started = time.perf_counter()
     render(source, silent, index, result.meta, cfg, progress)
     render_seconds = time.perf_counter() - started
 
-    if silent != target:
+    if remuxing:
         if video.remux_audio(source, silent, target):
             silent.unlink(missing_ok=True)
         else:
             silent.replace(target)
+            warnings.append(
+                f"ffmpeg could not copy the audio into {target.suffix}; output is silent. "
+                "An .mp4 destination is the safest container for this."
+            )
 
     return RunReport(
         source=source,
@@ -157,4 +175,5 @@ def process(
         n_redactions=sum(len(boxes) for boxes in index),
         scan_seconds=scan_seconds,
         render_seconds=render_seconds,
+        warnings=warnings,
     )
