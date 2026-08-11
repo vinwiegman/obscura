@@ -148,7 +148,11 @@ def process(
         else:
             # Asking for audio and silently getting none is the worst outcome:
             # the file looks finished and the loss is only noticed on playback.
-            warnings.append("--keep-audio needs ffmpeg on PATH; the output has no audio track.")
+            warnings.append(
+                "--keep-audio needs ffmpeg on PATH; the output has no audio track. "
+                "If you just installed it, restart your terminal -- a running "
+                "process keeps the PATH it started with."
+            )
     elif video.probe_has_audio(source):
         warnings.append("Source has an audio track; the output does not. Use --keep-audio.")
 
