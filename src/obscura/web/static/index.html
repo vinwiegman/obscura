@@ -41,6 +41,14 @@
   .track { height: 5px; background: var(--line); border-radius: 3px; margin: .7rem 0 0; overflow: hidden; }
   .fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
   .summary { margin-top: .6rem; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #drop.staged { border-style: solid; border-color: var(--accent); }
+  #pick-error { margin: .75rem 0 0; }
+  .actions { display: flex; gap: .6rem; align-items: center; margin-top: 1.25rem; }
+  button { font: inherit; font-size: .9rem; font-weight: 600; border-radius: 8px;
+           padding: .55rem 1.1rem; cursor: pointer; border: 1px solid transparent;
+           background: var(--accent); color: var(--bg); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--muted); border-color: var(--line); }
   .error { margin-top: .6rem; font-size: .85rem; color: #c0392b; }
   .warn { margin-top: .5rem; font-size: .8rem; color: #b26a00; }
   @media (prefers-color-scheme: dark) { .warn { color: #e0a250; } }
@@ -53,10 +61,11 @@
   <p class="lede">Face anonymization for video. Files are processed locally and never leave this machine.</p>
 
   <div id="drop" tabindex="0" role="button">
-    <strong>Drop a video here</strong>
-    <span>or click to choose &middot; mp4, mov, avi, mkv &middot; up to 2&nbsp;GB</span>
+    <strong id="drop-title">Drop a video here</strong>
+    <span id="drop-hint">or click to choose &middot; mp4, mov, avi, mkv &middot; up to 2&nbsp;GB</span>
   </div>
   <input type="file" id="file" accept="video/*" hidden>
+  <div id="pick-error" class="error" hidden></div>
 
   <fieldset>
     <legend>Options</legend>
@@ -83,6 +92,11 @@
     </div>
   </fieldset>
 
+  <div class="actions">
+    <button id="start" type="button" disabled>Redact video</button>
+    <button id="clear" type="button" class="ghost" hidden>Clear</button>
+  </div>
+
   <div id="jobs"></div>
 </main>
 
@@ -90,6 +104,14 @@
 const drop = document.getElementById('drop');
 const picker = document.getElementById('file');
 const jobs = document.getElementById('jobs');
+const startButton = document.getElementById('start');
+const clearButton = document.getElementById('clear');
+const pickError = document.getElementById('pick-error');
+const ALLOWED = ['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.mpg', '.mpeg', '.webm'];
+
+// The file is held here until the user commits. Nothing is uploaded before
+// that, so the options below are still theirs to change.
+let staged = null;
 
 drop.addEventListener('click', () => picker.click());
 drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') picker.click(); });
@@ -98,11 +120,38 @@ drop.addEventListener('dragleave', () => drop.classList.remove('over'));
 drop.addEventListener('drop', e => {
   e.preventDefault();
   drop.classList.remove('over');
-  if (e.dataTransfer.files.length) upload(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files.length) stage(e.dataTransfer.files[0]);
 });
-picker.addEventListener('change', () => { if (picker.files.length) upload(picker.files[0]); });
+picker.addEventListener('change', () => { if (picker.files.length) stage(picker.files[0]); });
 
-async function upload(file) {
+startButton.addEventListener('click', () => { if (staged) submit(staged); });
+clearButton.addEventListener('click', () => stage(null));
+
+function stage(file) {
+  pickError.hidden = true;
+
+  if (file) {
+    const suffix = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    if (!ALLOWED.includes(suffix)) {
+      // Catch it here rather than after a multi-gigabyte upload round trip.
+      pickError.textContent = `${suffix || 'That file'} is not a supported video type.`;
+      pickError.hidden = false;
+      file = null;
+    }
+  }
+
+  staged = file;
+  picker.value = '';  // so re-picking the same file still fires a change event
+  startButton.disabled = !file;
+  clearButton.hidden = !file;
+  drop.classList.toggle('staged', Boolean(file));
+  document.getElementById('drop-title').textContent = file ? file.name : 'Drop a video here';
+  document.getElementById('drop-hint').textContent = file
+    ? `${(file.size / 1024 ** 2).toFixed(1)} MB · click to choose a different file`
+    : 'or click to choose · mp4, mov, avi, mkv · up to 2 GB';
+}
+
+async function submit(file) {
   const body = new FormData();
   body.append('file', file);
   body.append('method', document.getElementById('method').value);
@@ -111,6 +160,9 @@ async function upload(file) {
   body.append('keep_audio', document.getElementById('keep_audio').checked);
 
   const card = renderCard({ id: 'pending', name: file.name, status: 'uploading', current: 0, total: 0 });
+  // Clear the staging area now: the options are captured in `body`, so the user
+  // is free to set up the next video while this one runs.
+  stage(null);
   const response = await fetch('/api/jobs', { method: 'POST', body });
   if (!response.ok) {
     const detail = await response.json().catch(() => ({ detail: response.statusText }));
