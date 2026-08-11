@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "obscura"
+version = "0.1.0"
+description = "Track-aware face anonymization for video datasets and CCTV footage."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Vin Wiegman" }]
+keywords = ["anonymization", "privacy", "gdpr", "face-detection", "video"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python-headless>=4.8",
+]
+
+[project.optional-dependencies]
+# Inference backends. uniface pulls the right onnxruntime build for each.
+cpu = ["uniface[cpu]>=0.1"]
+gpu = ["uniface[gpu]>=0.1"]
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "python-multipart>=0.0.9"]
+dev = ["pytest>=8.0", "ruff>=0.4"]
+
+[project.scripts]
+obscura = "obscura.cli:main"
+
+[project.urls]
+Source = "https://github.com/vinwiegman/obscura"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/obscura"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Obscura</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa; --fg: #1a1a19; --muted: #6b6b68;
+    --line: #e2e2df; --card: #ffffff; --accent: #2f6f4f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161614; --fg: #eceae5; --muted: #9a9891;
+            --line: #2e2c29; --card: #1e1c1a; --accent: #7fb894; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: -.015em; }
+  p.lede { color: var(--muted); margin: 0 0 2rem; }
+  #drop { border: 1.5px dashed var(--line); border-radius: 12px; padding: 3rem 1.5rem;
+          text-align: center; cursor: pointer; background: var(--card);
+          transition: border-color .15s, background .15s; }
+  #drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
+  #drop strong { display: block; margin-bottom: .35rem; }
+  #drop span { color: var(--muted); font-size: .875rem; }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; margin: 1.5rem 0 0; padding: 1rem 1.25rem; }
+  legend { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; padding: 0 .4rem; }
+  .row { display: flex; gap: 1.25rem; flex-wrap: wrap; align-items: center; }
+  label { font-size: .875rem; display: flex; gap: .45rem; align-items: center; }
+  select, input[type=range] { accent-color: var(--accent); }
+  select { background: var(--card); color: var(--fg); border: 1px solid var(--line);
+           border-radius: 6px; padding: .3rem .5rem; font: inherit; font-size: .875rem; }
+  #jobs { margin-top: 1.5rem; display: grid; gap: .75rem; }
+  .job { border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1.1rem; background: var(--card); }
+  .job header { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; }
+  .job .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .state { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+  .track { height: 5px; background: var(--line); border-radius: 3px; margin: .7rem 0 0; overflow: hidden; }
+  .fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .summary { margin-top: .6rem; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .error { margin-top: .6rem; font-size: .85rem; color: #c0392b; }
+  a.dl { display: inline-block; margin-top: .7rem; font-size: .875rem; color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Obscura</h1>
+  <p class="lede">Face anonymization for video. Files are processed locally and never leave this machine.</p>
+
+  <div id="drop" tabindex="0" role="button">
+    <strong>Drop a video here</strong>
+    <span>or click to choose &middot; mp4, mov, avi, mkv &middot; up to 2&nbsp;GB</span>
+  </div>
+  <input type="file" id="file" accept="video/*" hidden>
+
+  <fieldset>
+    <legend>Options</legend>
+    <div class="row">
+      <label>Method
+        <select id="method">
+          <option value="blur">Blur</option>
+          <option value="pixelate">Pixelate</option>
+          <option value="fill">Solid</option>
+        </select>
+      </label>
+      <label>Shape
+        <select id="shape">
+          <option value="ellipse">Ellipse</option>
+          <option value="rect">Rectangle</option>
+        </select>
+      </label>
+      <label>Margin
+        <input type="range" id="margin" min="0" max="0.5" step="0.02" value="0.18">
+      </label>
+    </div>
+  </fieldset>
+
+  <div id="jobs"></div>
+</main>
+
+<script>
+const drop = document.getElementById('drop');
+const picker = document.getElementById('file');
+const jobs = document.getElementById('jobs');
+
+drop.addEventListener('click', () => picker.click());
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') picker.click(); });
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => {
+  e.preventDefault();
+  drop.classList.remove('over');
+  if (e.dataTransfer.files.length) upload(e.dataTransfer.files[0]);
+});
+picker.addEventListener('change', () => { if (picker.files.length) upload(picker.files[0]); });
+
+async function upload(file) {
+  const body = new FormData();
+  body.append('file', file);
+  body.append('method', document.getElementById('method').value);
+  body.append('shape', document.getElementById('shape').value);
+  body.append('margin', document.getElementById('margin').value);
+
+  const card = renderCard({ id: 'pending', name: file.name, status: 'uploading', current: 0, total: 0 });
+  const response = await fetch('/api/jobs', { method: 'POST', body });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({ detail: response.statusText }));
+    card.querySelector('.state').textContent = 'failed';
+    card.insertAdjacentHTML('beforeend', `<div class="error">${detail.detail}</div>`);
+    return;
+  }
+  const job = await response.json();
+  card.dataset.id = job.id;
+  poll(job.id, card);
+}
+
+function renderCard(job) {
+  const card = document.createElement('div');
+  card.className = 'job';
+  card.innerHTML = `<header><span class="name"></span><span class="state"></span></header>
+                    <div class="track"><div class="fill"></div></div>`;
+  card.querySelector('.name').textContent = job.name;
+  card.querySelector('.state').textContent = job.status;
+  jobs.prepend(card);
+  return card;
+}
+
+async function poll(id, card) {
+  const job = await (await fetch(`/api/jobs/${id}`)).json();
+  const pct = job.total ? Math.round(100 * job.current / job.total) : 0;
+  card.querySelector('.fill').style.width = `${pct}%`;
+  card.querySelector('.state').textContent =
+    job.status === 'done' ? 'done' : `${job.status} ${pct}%`;
+
+  if (job.status === 'failed') {
+    card.insertAdjacentHTML('beforeend', `<div class="error">${job.error}</div>`);
+    return;
+  }
+  if (job.status === 'done') {
+    const s = job.summary;
+    card.insertAdjacentHTML('beforeend',
+      `<div class="summary">${s.frames} frames &middot; ${s.tracks} tracks &middot;
+       ${s.redactions} redactions (${s.healed} recovered by tracking) &middot; ${s.fps} fps</div>
+       <a class="dl" href="/api/jobs/${id}/download">Download redacted video</a>`);
+    return;
+  }
+  setTimeout(() => poll(id, card), 500);
+}
+</script>
+</body>
+</html>

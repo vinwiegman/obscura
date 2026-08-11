@@ -1,0 +1,16 @@
+.venv/
+.git/
+.github/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.egg-info/
+dist/
+build/
+samples/
+docs/
+tests/
+*.mp4
+*.avi
+*.mov
+*.onnx

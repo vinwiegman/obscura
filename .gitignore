@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Model weights, downloaded on first run
+~/.uniface/
+weights/
+*.onnx
+
+# Sample media and outputs
+samples/
+*.redacted.*
+*.silent.*
