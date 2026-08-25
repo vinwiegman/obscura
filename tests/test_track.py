@@ -1,6 +1,14 @@
 from obscura.config import TrackConfig
 from obscura.geometry import Box
-from obscura.track import IouTracker
+from obscura.track import BoxEkf, EkfTracker, IouTracker
+
+
+class ScriptedTracker:
+    def __init__(self, frames):
+        self.frames = iter(frames)
+
+    def update(self, detections):
+        return next(self.frames)
 
 
 def test_a_moving_box_keeps_its_id():
@@ -54,3 +62,89 @@ def test_distant_boxes_are_not_associated():
     moved = tracker.update([(Box(300, 300, 340, 340), 0.9)])[0][0]
 
     assert moved != original
+
+
+def test_box_ekf_learns_motion_and_predicts_forward():
+    ekf = BoxEkf(Box(0, 0, 40, 40))
+
+    for offset in (5, 10, 15, 20):
+        ekf.predict()
+        ekf.update(Box(offset, 0, offset + 40, 40))
+
+    last_center = ekf.box.center[0]
+    predicted = ekf.predict()
+
+    assert predicted.center[0] > last_center
+    assert predicted.width > 0
+    assert predicted.height > 0
+
+
+def test_ekf_tracker_emits_bounded_predictions_for_missed_faces():
+    cfg = TrackConfig(track_buffer=5, ekf_max_misses=2)
+    tracker = EkfTracker(IouTracker(cfg), cfg)
+
+    first = tracker.update([(Box(0, 0, 40, 40), 0.9)])
+    track_id = first[0][0]
+    tracker.update([(Box(5, 0, 45, 40), 0.9)])
+
+    miss_one = tracker.update([])
+    miss_two = tracker.update([])
+    miss_three = tracker.update([])
+
+    assert miss_one[0][0] == track_id
+    assert miss_two[0][0] == track_id
+    assert miss_one[0][1].center[0] > first[0][1].center[0]
+    assert tracker.predicted_ids == frozenset()
+    assert miss_three == []
+
+
+def test_ekf_tracker_marks_only_predicted_results():
+    cfg = TrackConfig(ekf_max_misses=2)
+    tracker = EkfTracker(IouTracker(cfg), cfg)
+
+    observed = tracker.update([(Box(0, 0, 40, 40), 0.9)])
+    assert tracker.predicted_ids == frozenset()
+
+    predicted = tracker.update([])
+    assert tracker.predicted_ids == {observed[0][0]}
+    assert predicted[0][0] == observed[0][0]
+
+
+def test_reacquired_face_with_new_base_id_reuses_the_original_ekf_track():
+    cfg = TrackConfig(ekf_max_misses=5)
+    base = ScriptedTracker(
+        [
+            [(10, Box(0, 0, 40, 40))],
+            [(10, Box(5, 0, 45, 40))],
+            [],
+            [(99, Box(15, 0, 55, 40))],
+        ]
+    )
+    tracker = EkfTracker(base, cfg)
+
+    original_id = tracker.update([])[0][0]
+    tracker.update([])
+    predicted = tracker.update([])
+    reacquired = tracker.update([])
+
+    assert predicted[0][0] == original_id
+    assert tracker.predicted_ids == frozenset()
+    assert reacquired == [(original_id, Box(15, 0, 55, 40))]
+
+
+def test_distant_new_face_does_not_steal_a_lost_ekf_track():
+    cfg = TrackConfig(ekf_max_misses=5)
+    base = ScriptedTracker(
+        [
+            [(10, Box(0, 0, 40, 40))],
+            [],
+            [(99, Box(300, 300, 340, 340))],
+        ]
+    )
+    tracker = EkfTracker(base, cfg)
+
+    original_id = tracker.update([])[0][0]
+    tracker.update([])
+    current = tracker.update([])
+
+    assert {track_id for track_id, _ in current} == {original_id, original_id + 1}

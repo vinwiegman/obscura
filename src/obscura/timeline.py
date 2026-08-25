@@ -25,27 +25,30 @@ class TrackTimeline:
 
     def __init__(self) -> None:
         self._tracks: dict[int, dict[int, Box]] = defaultdict(dict)
+        self._predictions: dict[int, dict[int, Box]] = defaultdict(dict)
 
-    def add(self, frame: int, track_id: int, box: Box) -> None:
-        self._tracks[track_id][frame] = box
+    def add(self, frame: int, track_id: int, box: Box, *, predicted: bool = False) -> None:
+        target = self._predictions if predicted else self._tracks
+        target[track_id][frame] = box
 
     @property
     def track_ids(self) -> list[int]:
-        return sorted(self._tracks)
+        return sorted(self._tracks.keys() | self._predictions.keys())
 
     def observations(self, track_id: int) -> dict[int, Box]:
         return self._tracks[track_id]
 
     def __len__(self) -> int:
-        return len(self._tracks)
+        return len(self._tracks.keys() | self._predictions.keys())
 
     def heal(self, n_frames: int, size: tuple[int, int], cfg: HealConfig) -> FrameIndex:
         """Expand sparse observations into dense per-frame coverage."""
         width, height = size
         index: FrameIndex = [[] for _ in range(n_frames)]
 
-        for track_id in self.track_ids:
-            for frame, box in _heal_track(self._tracks[track_id], n_frames, cfg).items():
+        for observations, predictions in _stitch_tracklets(self._tracks, self._predictions, cfg):
+            dense = _heal_track(observations, predictions, n_frames, cfg)
+            for frame, box in dense.items():
                 grown = box.expand(cfg.margin, cfg.top_extra).clip(width, height)
                 if not grown.is_empty:
                     index[frame].append(grown)
@@ -53,10 +56,82 @@ class TrackTimeline:
         return index
 
 
-def _heal_track(obs: dict[int, Box], n_frames: int, cfg: HealConfig) -> dict[int, Box]:
-    """Fill gaps within one track, then extend past its first and last sighting."""
+def _stitch_tracklets(
+    tracks: dict[int, dict[int, Box]],
+    predictions: dict[int, dict[int, Box]],
+    cfg: HealConfig,
+) -> list[tuple[dict[int, Box], dict[int, Box]]]:
+    """Join plausible non-overlapping fragments before filling their gaps.
+
+    A detector can reacquire the same face under a fresh tracker id. Keeping the
+    fragments separate leaves the old EKF prediction drifting while the new id
+    starts later. Since rendering waits for the whole scan, endpoint geometry on
+    both sides can safely identify plausible handoffs and interpolation can then
+    replace the forward-only predictions.
+    """
+    fragments = sorted(
+        (
+            (track_id, dict(observations), dict(predictions.get(track_id, {})))
+            for track_id, observations in tracks.items()
+            if observations
+        ),
+        key=lambda item: min(item[1]),
+    )
+    stitched: list[tuple[dict[int, Box], dict[int, Box]]] = []
+
+    for _track_id, observations, forecast in fragments:
+        first = min(observations)
+        first_box = observations[first]
+        best: tuple[float, int] | None = None
+
+        for index, (candidate_obs, _candidate_forecast) in enumerate(stitched):
+            last = max(candidate_obs)
+            missing = first - last - 1
+            if missing < 0 or missing > cfg.max_gap:
+                continue
+
+            last_box = candidate_obs[last]
+            width_ratio = first_box.width / max(last_box.width, 1.0)
+            height_ratio = first_box.height / max(last_box.height, 1.0)
+            if not (0.4 <= width_ratio <= 2.5 and 0.4 <= height_ratio <= 2.5):
+                continue
+
+            dx = first_box.center[0] - last_box.center[0]
+            dy = first_box.center[1] - last_box.center[1]
+            distance = (dx * dx + dy * dy) ** 0.5
+            frame_span = first - last
+            scale = max(last_box.width, last_box.height, first_box.width, first_box.height, 1.0)
+            speed = distance / max(frame_span, 1)
+            if speed > 0.25 * scale:
+                continue
+
+            score = distance / scale + missing / max(cfg.max_gap, 1) * 0.25
+            if best is None or score < best[0]:
+                best = (score, index)
+
+        if best is None:
+            stitched.append((observations, forecast))
+            continue
+
+        candidate_obs, candidate_forecast = stitched[best[1]]
+        candidate_obs.update(observations)
+        candidate_forecast.update(forecast)
+
+    # Prediction-only timelines are unusual but valid for callers constructing
+    # TrackTimeline directly, so preserve them rather than silently dropping data.
+    for track_id, forecast in predictions.items():
+        if track_id not in tracks and forecast:
+            stitched.append(({}, dict(forecast)))
+
+    return stitched
+
+
+def _heal_track(
+    obs: dict[int, Box], predictions: dict[int, Box], n_frames: int, cfg: HealConfig
+) -> dict[int, Box]:
+    """Fill gaps, preferring hindsight interpolation over forward predictions."""
     if not obs:
-        return {}
+        return {f: b for f, b in predictions.items() if 0 <= f < n_frames}
 
     frames = sorted(obs)
     dense: dict[int, Box] = dict(obs)
@@ -77,7 +152,13 @@ def _heal_track(obs: dict[int, Box], n_frames: int, cfg: HealConfig) -> dict[int
     for frame in range(max(0, first - cfg.lead), first):
         dense.setdefault(frame, obs[first])
     for frame in range(last + 1, min(n_frames, last + cfg.trail + 1)):
-        dense.setdefault(frame, obs[last])
+        dense.setdefault(frame, predictions.get(frame, obs[last]))
+
+    # EKF predictions cover detector loss without a future observation. They
+    # are inserted last so interpolation from real boxes on both sides wins.
+    for frame, box in predictions.items():
+        if 0 <= frame < n_frames:
+            dense.setdefault(frame, box)
 
     return {f: b for f, b in dense.items() if 0 <= f < n_frames}
 

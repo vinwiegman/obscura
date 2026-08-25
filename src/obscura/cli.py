@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
     coverage.add_argument("--lead", type=int, default=8, help="frames covered before first sight")
     coverage.add_argument("--trail", type=int, default=12, help="frames covered after last sight")
     coverage.add_argument(
+        "--ekf-max-misses",
+        type=int,
+        default=30,
+        help="frames to predict a lost face box (0 disables EKF prediction)",
+    )
+    coverage.add_argument(
         "--single-pass",
         action="store_true",
         help="skip healing and redact raw detections (baseline; leaks frames)",
@@ -80,7 +86,7 @@ def config_from_args(args: argparse.Namespace) -> RunConfig:
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if args.gpu else None
     return RunConfig(
         detect=DetectConfig(model=args.model, conf=args.conf, providers=providers),
-        track=TrackConfig(),
+        track=TrackConfig(ekf_max_misses=max(0, args.ekf_max_misses)),
         heal=HealConfig(
             max_gap=args.max_gap,
             lead=args.lead,

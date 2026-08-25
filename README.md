@@ -21,9 +21,13 @@ worst-case one.
 Obscura runs in two passes:
 
 1. **Scan** — decode the video, detect and track faces, keep only box geometry.
-2. **Heal** — repair the track timeline: interpolate across frames the detector
-   dropped, extend each track backwards and forwards past its first and last
-   sighting, and dilate every box.
+2. **Predict + heal** — a per-face bounding-box EKF carries short-lived tracks
+   through detector misses and hands a reacquired face back to its original
+   track instead of leaving a drifting ghost mask behind. A second, offline
+   tracklet-stitching step joins plausible fragments that the online tracker
+   could not reconnect. The full timeline then replaces forward predictions
+   with interpolation wherever a later real observation exists, extends each
+   track past its first and last sighting, and dilates every box.
 3. **Render** — decode again and write the redacted output.
 
 The reason this beats a streaming pipeline is *hindsight*. When the detector
@@ -118,6 +122,7 @@ obscura run footage.mp4 -o leaky.mp4 --single-pass
 | `--top-extra` | `0.25` | Extra headroom, since foreheads and hairlines sit above a tight bbox. |
 | `--max-gap` | `45` | Longest detector gap to bridge. Beyond this the face has probably left frame and interpolating would smear a redaction across unrelated pixels. |
 | `--lead` / `--trail` | `8` / `12` | Frames covered before the first and after the last detection. A face is detected once it turns far enough toward the camera — by then the earlier frames have already leaked. |
+| `--ekf-max-misses` | `30` | Keep predicting a moving face box for this many missed frames. Set to `0` to disable. The bound prevents a departed face from smearing a redaction across the scene indefinitely. |
 | `--conf` | `0.5` | Deliberately lower than you would pick for recognition. A false positive costs a blurred patch of wall; a false negative costs a face. |
 | `--model` | `retinaface` | Also `scrfd`, `yolov5`, `yolov8`. |
 | `--keep-audio` | off | Remux the source audio onto the output. Needs ffmpeg; warns if it is missing rather than failing silently. |

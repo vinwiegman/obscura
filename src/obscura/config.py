@@ -27,6 +27,13 @@ class TrackConfig:
     track_thresh: float = 0.4
     track_buffer: int = 60
     match_thresh: float = 0.8
+    ekf_max_misses: int = 30
+    """Frames for which the box EKF may emit a prediction without a detection.
+
+    This is deliberately shorter than the identity track buffer by default.
+    Continuing forever would eventually redact unrelated parts of the scene
+    after a person has actually left the frame.
+    """
 
 
 @dataclass(slots=True)

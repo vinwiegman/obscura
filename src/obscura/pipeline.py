@@ -86,8 +86,10 @@ def scan(
     for frame_index, frame in enumerate(video.frames(path)):
         detections = detector.detect(frame)
         raw.append([box for box, _ in detections])
-        for track_id, box in tracker.update(detections):
-            timeline.add(frame_index, track_id, box)
+        tracks = tracker.update(detections)
+        predicted_ids = getattr(tracker, "predicted_ids", frozenset())
+        for track_id, box in tracks:
+            timeline.add(frame_index, track_id, box, predicted=track_id in predicted_ids)
         progress("scan", frame_index + 1, meta.n_frames)
 
     # Trust the decoded count over the container's claim.
