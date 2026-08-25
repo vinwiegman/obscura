@@ -16,7 +16,7 @@ from obscura.config import HealConfig, RedactStyle, RunConfig, TrackConfig
 from obscura.geometry import Box
 from obscura.pipeline import build_index, process, scan
 from obscura.timeline import index_from_detections
-from obscura.track import IouTracker
+from obscura.track import EkfTracker, IouTracker
 
 N_FRAMES = 60
 SIZE = (320, 240)
@@ -60,6 +60,19 @@ class FlakyDetector:
         return [(true_box(self.frame_index), 0.95)]
 
 
+class TailDropDetector:
+    """Loses the face permanently for the final ten frames."""
+
+    def __init__(self) -> None:
+        self.frame_index = -1
+
+    def detect(self, frame):
+        self.frame_index += 1
+        if self.frame_index >= N_FRAMES - 10:
+            return []
+        return [(true_box(self.frame_index), 0.95)]
+
+
 @pytest.fixture
 def scanned(clip):
     return scan(clip, FlakyDetector(), IouTracker(TrackConfig(track_buffer=30)))
@@ -99,6 +112,23 @@ def test_healed_boxes_track_the_face_rather_than_freezing(scanned):
     expected = true_box(14)
 
     assert abs(middle.center[0] - expected.center[0]) < 5
+
+
+def test_ekf_keeps_a_moving_face_covered_after_detection_stops(clip):
+    track_cfg = TrackConfig(track_buffer=30, ekf_max_misses=10)
+    tracker = EkfTracker(IouTracker(track_cfg), track_cfg)
+    result = scan(clip, TailDropDetector(), tracker)
+
+    # No frozen trail fallback: coverage in the tail must come from EKF motion.
+    index = result.timeline.heal(
+        N_FRAMES,
+        result.meta.size,
+        HealConfig(trail=0, margin=0.18, top_extra=0.0),
+    )
+
+    assert all(index[frame] for frame in range(N_FRAMES - 10, N_FRAMES))
+    assert index[-1][0].center[0] > index[N_FRAMES - 11][0].center[0]
+    assert coverage(true_box(N_FRAMES - 1), index[-1]) >= 0.9
 
 
 def test_process_writes_a_playable_video(clip, tmp_path):

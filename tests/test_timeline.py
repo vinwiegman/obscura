@@ -106,3 +106,50 @@ def test_baseline_index_drops_boxes_outside_the_frame():
     cfg = HealConfig(margin=0.0, top_extra=0.0)
     index = index_from_detections([[Box(500, 500, 510, 510)]], (100, 100), cfg)
     assert index == [[]]
+
+
+def test_ekf_prediction_extends_coverage_without_a_future_detection(bare):
+    timeline = timeline_with({0: Box(0, 0, 10, 10)})
+    timeline.add(1, 1, Box(5, 0, 15, 10), predicted=True)
+    timeline.add(2, 1, Box(10, 0, 20, 10), predicted=True)
+
+    index = timeline.heal(3, (100, 100), bare)
+
+    assert [boxes[0] for boxes in index] == [
+        Box(0, 0, 10, 10),
+        Box(5, 0, 15, 10),
+        Box(10, 0, 20, 10),
+    ]
+
+
+def test_hindsight_interpolation_wins_over_ekf_prediction(bare):
+    timeline = timeline_with({0: Box(0, 0, 10, 10), 2: Box(20, 0, 30, 10)})
+    timeline.add(1, 1, Box(100, 0, 110, 10), predicted=True)
+
+    index = timeline.heal(3, (200, 100), bare)
+
+    assert index[1][0] == Box(10, 0, 20, 10)
+
+
+def test_plausible_track_fragments_are_stitched_before_interpolation(bare):
+    timeline = timeline_with({0: Box(0, 0, 20, 20), 1: Box(2, 0, 22, 20)}, track_id=1)
+    timeline.add(4, 99, Box(8, 0, 28, 20))
+    timeline.add(5, 99, Box(10, 0, 30, 20))
+    # This deliberately bad forward prediction must lose to observations on
+    # both sides once the fragments are stitched.
+    timeline.add(2, 1, Box(100, 0, 120, 20), predicted=True)
+
+    index = timeline.heal(6, (200, 100), bare)
+
+    assert [len(boxes) for boxes in index] == [1, 1, 1, 1, 1, 1]
+    assert index[2][0] == Box(4, 0, 24, 20)
+    assert index[3][0] == Box(6, 0, 26, 20)
+
+
+def test_implausibly_distant_later_track_is_not_stitched(bare):
+    timeline = timeline_with({0: Box(0, 0, 20, 20)}, track_id=1)
+    timeline.add(3, 2, Box(300, 300, 320, 320))
+
+    index = timeline.heal(4, (400, 400), bare)
+
+    assert [len(boxes) for boxes in index] == [1, 0, 0, 1]
