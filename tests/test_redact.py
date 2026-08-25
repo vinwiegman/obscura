@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 
 from obscura import redact
@@ -48,6 +49,39 @@ def test_blur_strength_scales_with_box_size():
     # Both regions should be flattened to a comparable degree despite the size gap.
     assert float(small[15:25, 15:25].std()) < 25
     assert float(large[50:100, 50:100].std()) < 25
+
+
+def test_large_faces_never_reach_a_huge_gaussian_kernel(monkeypatch):
+    """Guards the fix for a 200x slowdown.
+
+    Sigma must scale with the face, but applying it directly needs a kernel
+    hundreds of taps wide: a 700px face cost 4.5 seconds per frame. The blur is
+    done on a downscaled copy instead, so the kernel stays small no matter how
+    big the face is.
+    """
+    seen = []
+    real = cv2.GaussianBlur
+
+    def spy(src, ksize, sigma, *args, **kwargs):
+        seen.append(ksize[0])
+        return real(src, ksize, sigma, *args, **kwargs)
+
+    monkeypatch.setattr(redact.cv2, "GaussianBlur", spy)
+    frame = noisy_frame(900, 900)
+
+    redact.apply(frame, [Box(0, 0, 800, 800)], RedactStyle(method="blur", shape="rect"))
+
+    assert seen, "no blur was applied"
+    assert max(seen) <= 33, f"kernel grew to {max(seen)} taps"
+
+
+def test_a_huge_face_is_still_thoroughly_destroyed():
+    """Speed must not have been bought with a weaker blur."""
+    frame = noisy_frame(900, 900)
+
+    redact.apply(frame, [Box(0, 0, 800, 800)], RedactStyle(method="blur", shape="rect"))
+
+    assert float(frame[200:600, 200:600].std()) < 5
 
 
 def test_pixelate_collapses_the_region_to_few_colours():
