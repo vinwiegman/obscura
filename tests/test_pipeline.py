@@ -17,6 +17,7 @@ from obscura.geometry import Box
 from obscura.pipeline import build_index, process, scan
 from obscura.timeline import index_from_detections
 from obscura.track import EkfTracker, IouTracker
+from obscura.types import Detection
 
 N_FRAMES = 60
 SIZE = (320, 240)
@@ -57,7 +58,13 @@ class FlakyDetector:
         self.frame_index += 1
         if self.frame_index in DROPPED:
             return []
-        return [(true_box(self.frame_index), 0.95)]
+        box = true_box(self.frame_index)
+        cx, cy = box.center
+        landmarks = np.array(
+            [[cx - 12, cy - 8], [cx + 12, cy - 8], [cx, cy], [cx - 9, cy + 12], [cx + 9, cy + 12]],
+            dtype=np.float32,
+        )
+        return [Detection(box=box, score=0.95, landmarks=landmarks)]
 
 
 class TailDropDetector:
@@ -70,7 +77,7 @@ class TailDropDetector:
         self.frame_index += 1
         if self.frame_index >= N_FRAMES - 10:
             return []
-        return [(true_box(self.frame_index), 0.95)]
+        return [Detection(box=true_box(self.frame_index), score=0.95)]
 
 
 @pytest.fixture

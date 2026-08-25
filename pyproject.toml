@@ -45,5 +45,10 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's parameter markers are calls in argument defaults by design, which
+# B008 would otherwise flag on every endpoint.
+extend-immutable-calls = ["fastapi.Body", "fastapi.File", "fastapi.Form", "fastapi.Query"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

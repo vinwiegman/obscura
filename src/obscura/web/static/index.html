@@ -8,31 +8,34 @@
   :root {
     color-scheme: light dark;
     --bg: #fbfbfa; --fg: #1a1a19; --muted: #6b6b68;
-    --line: #e2e2df; --card: #ffffff; --accent: #2f6f4f;
+    --line: #e2e2df; --card: #ffffff; --accent: #2f6f4f; --warn: #b26a00;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #161614; --fg: #eceae5; --muted: #9a9891;
-            --line: #2e2c29; --card: #1e1c1a; --accent: #7fb894; }
+            --line: #2e2c29; --card: #1e1c1a; --accent: #7fb894; --warn: #e0a250; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
          font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif; }
-  main { max-width: 640px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+  main { max-width: 720px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
   h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: -.015em; }
   p.lede { color: var(--muted); margin: 0 0 2rem; }
+
   #drop { border: 1.5px dashed var(--line); border-radius: 12px; padding: 3rem 1.5rem;
           text-align: center; cursor: pointer; background: var(--card);
           transition: border-color .15s, background .15s; }
   #drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
+  #drop.staged { border-style: solid; border-color: var(--accent); }
   #drop strong { display: block; margin-bottom: .35rem; }
   #drop span { color: var(--muted); font-size: .875rem; }
-  fieldset { border: 1px solid var(--line); border-radius: 10px; margin: 1.5rem 0 0; padding: 1rem 1.25rem; }
-  legend { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; padding: 0 .4rem; }
-  .row { display: flex; gap: 1.25rem; flex-wrap: wrap; align-items: center; }
-  label { font-size: .875rem; display: flex; gap: .45rem; align-items: center; }
-  select, input[type=range] { accent-color: var(--accent); }
-  select { background: var(--card); color: var(--fg); border: 1px solid var(--line);
-           border-radius: 6px; padding: .3rem .5rem; font: inherit; font-size: .875rem; }
+
+  .actions { display: flex; gap: .6rem; align-items: center; margin-top: 1.25rem; flex-wrap: wrap; }
+  button { font: inherit; font-size: .9rem; font-weight: 600; border-radius: 8px;
+           padding: .55rem 1.1rem; cursor: pointer; border: 1px solid transparent;
+           background: var(--accent); color: var(--bg); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--muted); border-color: var(--line); }
+
   #jobs { margin-top: 1.5rem; display: grid; gap: .75rem; }
   .job { border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1.1rem; background: var(--card); }
   .job header { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; }
@@ -41,18 +44,36 @@
   .track { height: 5px; background: var(--line); border-radius: 3px; margin: .7rem 0 0; overflow: hidden; }
   .fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
   .summary { margin-top: .6rem; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
-  #drop.staged { border-style: solid; border-color: var(--accent); }
-  #pick-error { margin: .75rem 0 0; }
-  .actions { display: flex; gap: .6rem; align-items: center; margin-top: 1.25rem; }
-  button { font: inherit; font-size: .9rem; font-weight: 600; border-radius: 8px;
-           padding: .55rem 1.1rem; cursor: pointer; border: 1px solid transparent;
-           background: var(--accent); color: var(--bg); }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  button.ghost { background: transparent; color: var(--muted); border-color: var(--line); }
   .error { margin-top: .6rem; font-size: .85rem; color: #c0392b; }
-  .warn { margin-top: .5rem; font-size: .8rem; color: #b26a00; }
-  @media (prefers-color-scheme: dark) { .warn { color: #e0a250; } }
+  .warn { margin-top: .5rem; font-size: .8rem; color: var(--warn); }
   a.dl { display: inline-block; margin-top: .7rem; font-size: .875rem; color: var(--accent); font-weight: 600; }
+
+  .review { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+  .review h3 { font-size: .95rem; margin: 0 0 .2rem; }
+  .review .hint { color: var(--muted); font-size: .82rem; margin: 0 0 .9rem; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+             gap: .6rem; margin-bottom: 1rem; }
+  .person { border: 2px solid var(--line); border-radius: 9px; overflow: hidden; cursor: pointer;
+            background: var(--bg); text-align: center; padding-bottom: .35rem; position: relative; }
+  .person img, .person .noface { width: 100%; aspect-ratio: 1; object-fit: cover; display: block;
+                                 background: var(--line); }
+  .person .noface { display: grid; place-items: center; color: var(--muted); font-size: 1.6rem; }
+  .person .who { font-size: .78rem; font-weight: 600; margin-top: .3rem; }
+  .person .meta { font-size: .7rem; color: var(--muted); }
+  .person.picked { border-color: var(--accent); }
+  .person.picked::after { content: "✓"; position: absolute; top: .3rem; right: .4rem;
+                          background: var(--accent); color: var(--bg); border-radius: 50%;
+                          width: 1.25rem; height: 1.25rem; display: grid; place-items: center;
+                          font-size: .75rem; font-weight: 700; }
+  .person.locked { cursor: not-allowed; opacity: .72; border-style: dashed; }
+  .person.locked::after { content: "🔒"; position: absolute; top: .3rem; right: .4rem;
+                          background: none; font-size: .8rem; }
+
+  .controls { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; margin-bottom: .9rem; }
+  label { font-size: .85rem; display: flex; gap: .45rem; align-items: center; }
+  select, input[type=range] { accent-color: var(--accent); }
+  select { background: var(--card); color: var(--fg); border: 1px solid var(--line);
+           border-radius: 6px; padding: .3rem .5rem; font: inherit; font-size: .85rem; }
 </style>
 </head>
 <body>
@@ -67,33 +88,8 @@
   <input type="file" id="file" accept="video/*" hidden>
   <div id="pick-error" class="error" hidden></div>
 
-  <fieldset>
-    <legend>Options</legend>
-    <div class="row">
-      <label>Method
-        <select id="method">
-          <option value="blur">Blur</option>
-          <option value="pixelate">Pixelate</option>
-          <option value="fill">Solid</option>
-        </select>
-      </label>
-      <label>Shape
-        <select id="shape">
-          <option value="ellipse">Ellipse</option>
-          <option value="rect">Rectangle</option>
-        </select>
-      </label>
-      <label>Margin
-        <input type="range" id="margin" min="0" max="0.5" step="0.02" value="0.18">
-      </label>
-      <label title="Requires ffmpeg on PATH">
-        <input type="checkbox" id="keep_audio"> Keep audio
-      </label>
-    </div>
-  </fieldset>
-
   <div class="actions">
-    <button id="start" type="button" disabled>Redact video</button>
+    <button id="start" type="button" disabled>Scan video</button>
     <button id="clear" type="button" class="ghost" hidden>Clear</button>
   </div>
 
@@ -109,9 +105,11 @@ const clearButton = document.getElementById('clear');
 const pickError = document.getElementById('pick-error');
 const ALLOWED = ['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.mpg', '.mpeg', '.webm'];
 
-// The file is held here until the user commits. Nothing is uploaded before
-// that, so the options below are still theirs to change.
+// The file is held here until the user commits. Nothing is uploaded before that.
 let staged = null;
+// Per-job review state, keyed by job id. Kept out of the DOM so repainting the
+// card cannot lose the reviewer's selection.
+const reviews = new Map();
 
 drop.addEventListener('click', () => picker.click());
 drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') picker.click(); });
@@ -123,13 +121,11 @@ drop.addEventListener('drop', e => {
   if (e.dataTransfer.files.length) stage(e.dataTransfer.files[0]);
 });
 picker.addEventListener('change', () => { if (picker.files.length) stage(picker.files[0]); });
-
 startButton.addEventListener('click', () => { if (staged) submit(staged); });
 clearButton.addEventListener('click', () => stage(null));
 
 function stage(file) {
   pickError.hidden = true;
-
   if (file) {
     const suffix = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
     if (!ALLOWED.includes(suffix)) {
@@ -139,7 +135,6 @@ function stage(file) {
       file = null;
     }
   }
-
   staged = file;
   picker.value = '';  // so re-picking the same file still fires a change event
   startButton.disabled = !file;
@@ -154,36 +149,36 @@ function stage(file) {
 async function submit(file) {
   const body = new FormData();
   body.append('file', file);
-  body.append('method', document.getElementById('method').value);
-  body.append('shape', document.getElementById('shape').value);
-  body.append('margin', document.getElementById('margin').value);
-  body.append('keep_audio', document.getElementById('keep_audio').checked);
 
-  const card = renderCard({ id: 'pending', name: file.name, status: 'uploading', current: 0, total: 0 });
-  // Clear the staging area now: the options are captured in `body`, so the user
-  // is free to set up the next video while this one runs.
+  const card = makeCard(file.name);
   stage(null);
+
   const response = await fetch('/api/jobs', { method: 'POST', body });
   if (!response.ok) {
     const detail = await response.json().catch(() => ({ detail: response.statusText }));
-    card.querySelector('.state').textContent = 'failed';
-    card.insertAdjacentHTML('beforeend', `<div class="error">${detail.detail}</div>`);
+    fail(card, detail.detail);
     return;
   }
   const job = await response.json();
   card.dataset.id = job.id;
+  reviews.set(job.id, { policy: 'except', selected: new Set() });
   poll(job.id, card);
 }
 
-function renderCard(job) {
+function makeCard(name) {
   const card = document.createElement('div');
   card.className = 'job';
-  card.innerHTML = `<header><span class="name"></span><span class="state"></span></header>
-                    <div class="track"><div class="fill"></div></div>`;
-  card.querySelector('.name').textContent = job.name;
-  card.querySelector('.state').textContent = job.status;
+  card.innerHTML = `<header><span class="name"></span><span class="state">uploading</span></header>
+                    <div class="track"><div class="fill"></div></div>
+                    <div class="body"></div>`;
+  card.querySelector('.name').textContent = name;
   jobs.prepend(card);
   return card;
+}
+
+function fail(card, message) {
+  card.querySelector('.state').textContent = 'failed';
+  card.querySelector('.body').innerHTML = `<div class="error">${message}</div>`;
 }
 
 async function poll(id, card) {
@@ -191,25 +186,122 @@ async function poll(id, card) {
   const pct = job.total ? Math.round(100 * job.current / job.total) : 0;
   card.querySelector('.fill').style.width = `${pct}%`;
   card.querySelector('.state').textContent =
-    job.status === 'done' ? 'done' : `${job.status} ${pct}%`;
+    job.status === 'done' || job.status === 'review' ? job.status : `${job.status} ${pct}%`;
 
-  if (job.status === 'failed') {
-    card.insertAdjacentHTML('beforeend', `<div class="error">${job.error}</div>`);
-    return;
-  }
-  if (job.status === 'done') {
-    const s = job.summary;
-    card.insertAdjacentHTML('beforeend',
-      `<div class="summary">${s.frames} frames &middot; ${s.tracks} tracks &middot;
-       ${s.redactions} redactions (${s.healed} recovered by tracking) &middot; ${s.fps} fps</div>`);
-    for (const warning of s.warnings || []) {
-      card.insertAdjacentHTML('beforeend', `<div class="warn">${warning}</div>`);
-    }
-    card.insertAdjacentHTML('beforeend',
-      `<a class="dl" href="/api/jobs/${id}/download">Download redacted video</a>`);
-    return;
-  }
+  if (job.status === 'failed') { fail(card, job.error); return; }
+  if (job.status === 'review') { paintReview(card, job); return; }
+  if (job.status === 'done') { paintDone(card, job); return; }
   setTimeout(() => poll(id, card), 500);
+}
+
+function paintReview(card, job) {
+  const state = reviews.get(job.id);
+  const body = card.querySelector('.body');
+  body.innerHTML = `
+    <div class="review">
+      <h3>${job.people.length} ${job.people.length === 1 ? 'person' : 'people'} found</h3>
+      <p class="hint"></p>
+      <div class="gallery"></div>
+      <div class="controls">
+        <label>Policy
+          <select class="policy">
+            <option value="except">Blur everyone except those I pick</option>
+            <option value="only">Blur only those I pick</option>
+          </select>
+        </label>
+        <label>Method
+          <select class="method">
+            <option value="blur">Blur</option>
+            <option value="pixelate">Pixelate</option>
+            <option value="fill">Solid</option>
+          </select>
+        </label>
+        <label>Shape
+          <select class="shape">
+            <option value="ellipse">Ellipse</option>
+            <option value="rect">Rectangle</option>
+          </select>
+        </label>
+        <label>Margin <input type="range" class="margin" min="0" max="0.5" step="0.02" value="0.18"></label>
+        <label title="Requires ffmpeg on PATH"><input type="checkbox" class="audio"> Keep audio</label>
+      </div>
+      <button class="render" type="button">Render video</button>
+    </div>`;
+
+  for (const warning of job.warnings || []) {
+    body.insertAdjacentHTML('afterbegin', `<div class="warn">${warning}</div>`);
+  }
+
+  const gallery = body.querySelector('.gallery');
+  for (const person of job.people) {
+    const tile = document.createElement('div');
+    tile.className = 'person' + (person.always_redact ? ' locked' : '');
+    tile.title = person.always_redact
+      ? `Always blurred: ${person.reason}`
+      : `${person.tracks} track${person.tracks === 1 ? '' : 's'}, frames ${person.first_frame}–${person.last_frame}`;
+    const face = person.has_thumbnail
+      ? `<img src="/api/jobs/${job.id}/people/${person.id}/thumbnail" alt="Person ${person.id}">`
+      : `<div class="noface">?</div>`;
+    tile.innerHTML = `${face}<div class="who">Person ${person.id}</div>
+                      <div class="meta">${person.frames} frames</div>`;
+    if (!person.always_redact) {
+      tile.addEventListener('click', () => {
+        state.selected.has(person.id) ? state.selected.delete(person.id) : state.selected.add(person.id);
+        tile.classList.toggle('picked', state.selected.has(person.id));
+      });
+    }
+    gallery.append(tile);
+  }
+
+  const policy = body.querySelector('.policy');
+  const hint = body.querySelector('.hint');
+  // "Selected" flips meaning with the policy, so say which one is in force.
+  const describe = () => {
+    hint.textContent = policy.value === 'except'
+      ? 'Pick the people to leave visible. Everyone else is blurred.'
+      : 'Pick the people to blur. Everyone else is left visible.';
+  };
+  policy.addEventListener('change', () => { state.policy = policy.value; describe(); });
+  describe();
+
+  body.querySelector('.render').addEventListener('click', () => render(card, job.id, body, state));
+}
+
+async function render(card, id, body, state) {
+  const payload = {
+    policy: state.policy,
+    selected: [...state.selected],
+    method: body.querySelector('.method').value,
+    shape: body.querySelector('.shape').value,
+    margin: parseFloat(body.querySelector('.margin').value),
+    keep_audio: body.querySelector('.audio').checked
+  };
+  body.querySelector('.render').disabled = true;
+
+  const response = await fetch(`/api/jobs/${id}/render`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({ detail: response.statusText }));
+    fail(card, detail.detail);
+    return;
+  }
+  poll(id, card);
+}
+
+function paintDone(card, job) {
+  const s = job.summary;
+  const body = card.querySelector('.body');
+  body.innerHTML = `<div class="summary">${s.frames} frames · ${s.people} people ·
+    ${s.redacted_tracks} of ${s.tracks} tracks blurred ·
+    ${s.redactions} redactions (${s.healed} recovered by tracking) · ${s.fps} fps</div>`;
+  for (const warning of job.warnings || []) {
+    body.insertAdjacentHTML('beforeend', `<div class="warn">${warning}</div>`);
+  }
+  body.insertAdjacentHTML('beforeend',
+    `<a class="dl" href="/api/jobs/${job.id}/download">Download redacted video</a>`);
 }
 </script>
 </body>

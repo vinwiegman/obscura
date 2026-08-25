@@ -22,10 +22,11 @@ import numpy as np
 
 from .config import TrackConfig
 from .geometry import Box, iou
+from .types import Detection
 
 
 class Tracker(Protocol):
-    def update(self, detections: list[tuple[Box, float]]) -> list[tuple[int, Box]]: ...
+    def update(self, detections: list[Detection]) -> list[tuple[int, Box]]: ...
 
 
 def build(cfg: TrackConfig) -> Tracker:
@@ -159,7 +160,7 @@ class EkfTracker:
         """Track ids whose boxes in the latest result are EKF predictions."""
         return self._predicted_ids
 
-    def update(self, detections: list[tuple[Box, float]]) -> list[tuple[int, Box]]:
+    def update(self, detections: list[Detection]) -> list[tuple[int, Box]]:
         base_observations = self._tracker.update(detections)
         predictions = {
             track_id: state.filter.predict(velocity_decay=0.97)
@@ -264,10 +265,10 @@ class ByteTrackAdapter:
             match_thresh=cfg.match_thresh,
         )
 
-    def update(self, detections: list[tuple[Box, float]]) -> list[tuple[int, Box]]:
+    def update(self, detections: list[Detection]) -> list[tuple[int, Box]]:
         if detections:
             array = np.array(
-                [[b.x1, b.y1, b.x2, b.y2, score] for b, score in detections],
+                [[d.box.x1, d.box.y1, d.box.x2, d.box.y2, d.score] for d in detections],
                 dtype=np.float32,
             )
         else:
@@ -294,14 +295,14 @@ class IouTracker:
         self._next_id = 1
         self._tracks: dict[int, tuple[Box, int]] = {}  # id -> (box, frames since seen)
 
-    def update(self, detections: list[tuple[Box, float]]) -> list[tuple[int, Box]]:
-        kept = [(box, score) for box, score in detections if score >= self._cfg.track_thresh]
+    def update(self, detections: list[Detection]) -> list[tuple[int, Box]]:
+        kept = [d.box for d in detections if d.score >= self._cfg.track_thresh]
         unmatched = set(range(len(kept)))
         matched: dict[int, Box] = {}
 
         pairs = sorted(
             (
-                (iou(track_box, kept[i][0]), track_id, i)
+                (iou(track_box, kept[i]), track_id, i)
                 for track_id, (track_box, _) in self._tracks.items()
                 for i in range(len(kept))
             ),
@@ -316,10 +317,10 @@ class IouTracker:
                 continue
             used_tracks.add(track_id)
             unmatched.discard(i)
-            matched[track_id] = kept[i][0]
+            matched[track_id] = kept[i]
 
         for i in unmatched:
-            matched[self._next_id] = kept[i][0]
+            matched[self._next_id] = kept[i]
             self._next_id += 1
 
         # Age unmatched tracks; drop them once past the buffer.

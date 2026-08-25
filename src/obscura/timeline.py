@@ -41,12 +41,45 @@ class TrackTimeline:
     def __len__(self) -> int:
         return len(self._tracks.keys() | self._predictions.keys())
 
-    def heal(self, n_frames: int, size: tuple[int, int], cfg: HealConfig) -> FrameIndex:
-        """Expand sparse observations into dense per-frame coverage."""
+    def spans(self) -> dict[int, tuple[int, int, int]]:
+        """Per track: ``(frames seen, first frame, last frame)``.
+
+        Prediction-only tracks are included. Identity grouping keys off this, and
+        a track missing from it would belong to no person, so nothing could ever
+        select it for redaction -- a silent way to leak a face.
+        """
+        spans: dict[int, tuple[int, int, int]] = {}
+        for track_id in self.track_ids:
+            frames = set(self._tracks.get(track_id, {})) | set(self._predictions.get(track_id, {}))
+            if frames:
+                spans[track_id] = (len(frames), min(frames), max(frames))
+        return spans
+
+    def heal(
+        self,
+        n_frames: int,
+        size: tuple[int, int],
+        cfg: HealConfig,
+        only: set[int] | None = None,
+    ) -> FrameIndex:
+        """Expand sparse observations into dense per-frame coverage.
+
+        ``only`` restricts the output to those track ids, which is how selective
+        redaction is applied: everything else in the timeline is left visible.
+
+        Stitching runs first, so a group can span several original track ids. A
+        group is redacted if *any* of its ids was selected -- if motion
+        stitching wrongly joined two people, over-blurring is the survivable
+        error and leaving one visible is not.
+        """
         width, height = size
         index: FrameIndex = [[] for _ in range(n_frames)]
 
-        for observations, predictions in _stitch_tracklets(self._tracks, self._predictions, cfg):
+        for track_ids, observations, predictions in _stitch_tracklets(
+            self._tracks, self._predictions, cfg
+        ):
+            if only is not None and not (track_ids & only):
+                continue
             dense = _heal_track(observations, predictions, n_frames, cfg)
             for frame, box in dense.items():
                 grown = box.expand(cfg.margin, cfg.top_extra).clip(width, height)
@@ -60,7 +93,7 @@ def _stitch_tracklets(
     tracks: dict[int, dict[int, Box]],
     predictions: dict[int, dict[int, Box]],
     cfg: HealConfig,
-) -> list[tuple[dict[int, Box], dict[int, Box]]]:
+) -> list[tuple[set[int], dict[int, Box], dict[int, Box]]]:
     """Join plausible non-overlapping fragments before filling their gaps.
 
     A detector can reacquire the same face under a fresh tracker id. Keeping the
@@ -68,6 +101,9 @@ def _stitch_tracklets(
     starts later. Since rendering waits for the whole scan, endpoint geometry on
     both sides can safely identify plausible handoffs and interpolation can then
     replace the forward-only predictions.
+
+    Each group carries the original track ids it absorbed, so selective
+    redaction can still tell which people a stitched group belongs to.
     """
     fragments = sorted(
         (
@@ -77,14 +113,14 @@ def _stitch_tracklets(
         ),
         key=lambda item: min(item[1]),
     )
-    stitched: list[tuple[dict[int, Box], dict[int, Box]]] = []
+    stitched: list[tuple[set[int], dict[int, Box], dict[int, Box]]] = []
 
-    for _track_id, observations, forecast in fragments:
+    for track_id, observations, forecast in fragments:
         first = min(observations)
         first_box = observations[first]
         best: tuple[float, int] | None = None
 
-        for index, (candidate_obs, _candidate_forecast) in enumerate(stitched):
+        for index, (_candidate_ids, candidate_obs, _candidate_forecast) in enumerate(stitched):
             last = max(candidate_obs)
             missing = first - last - 1
             if missing < 0 or missing > cfg.max_gap:
@@ -110,10 +146,11 @@ def _stitch_tracklets(
                 best = (score, index)
 
         if best is None:
-            stitched.append((observations, forecast))
+            stitched.append(({track_id}, observations, forecast))
             continue
 
-        candidate_obs, candidate_forecast = stitched[best[1]]
+        candidate_ids, candidate_obs, candidate_forecast = stitched[best[1]]
+        candidate_ids.add(track_id)
         candidate_obs.update(observations)
         candidate_forecast.update(forecast)
 
@@ -121,7 +158,7 @@ def _stitch_tracklets(
     # TrackTimeline directly, so preserve them rather than silently dropping data.
     for track_id, forecast in predictions.items():
         if track_id not in tracks and forecast:
-            stitched.append(({}, dict(forecast)))
+            stitched.append(({track_id}, {}, dict(forecast)))
 
     return stitched
 

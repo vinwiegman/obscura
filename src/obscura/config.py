@@ -79,11 +79,38 @@ class RedactStyle:
 
 
 @dataclass(slots=True)
+class IdentityConfig:
+    """Grouping tracks into people, for selective redaction."""
+
+    enabled: bool = False
+    """Off by default: blurring everyone needs no recognition model, and running
+    one carries both a cost and a licence question the plain path avoids."""
+
+    model: str = "arcface"
+    providers: list[str] | None = None
+
+    threshold: float = 0.45
+    """Cosine similarity above which two tracks are judged the same person.
+
+    Tuned to under-merge rather than over-merge. Splitting one person into two
+    gallery entries is a nuisance; merging two people means deselecting one
+    un-blurs the other.
+    """
+
+    min_face: int = 40
+    """Faces whose representative crop is smaller than this are never matched,
+    and are pinned to always-redact."""
+
+    thumb_size: int = 160
+
+
+@dataclass(slots=True)
 class RunConfig:
     detect: DetectConfig = field(default_factory=DetectConfig)
     track: TrackConfig = field(default_factory=TrackConfig)
     heal: HealConfig = field(default_factory=HealConfig)
     style: RedactStyle = field(default_factory=RedactStyle)
+    identity: IdentityConfig = field(default_factory=IdentityConfig)
     single_pass: bool = False
     """Skip healing and redact raw per-frame detections.
 

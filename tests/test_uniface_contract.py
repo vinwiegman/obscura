@@ -47,8 +47,14 @@ def adapter():
     return ByteTrackAdapter(BYTETracker, TrackConfig())
 
 
+def det(box, score=0.9):
+    from obscura.types import Detection
+
+    return Detection(box=box, score=score)
+
+
 def test_adapter_returns_ids_and_boxes(adapter):
-    tracks = adapter.update([(Box(10, 10, 60, 70), 0.9), (Box(200, 30, 250, 90), 0.8)])
+    tracks = adapter.update([det(Box(10, 10, 60, 70)), det(Box(200, 30, 250, 90), 0.8)])
 
     assert len(tracks) == 2
     for track_id, box in tracks:
@@ -58,15 +64,15 @@ def test_adapter_returns_ids_and_boxes(adapter):
 
 
 def test_adapter_keeps_ids_stable_across_frames(adapter):
-    first = adapter.update([(Box(10, 10, 60, 70), 0.9)])
-    second = adapter.update([(Box(14, 10, 64, 70), 0.9)])
+    first = adapter.update([det(Box(10, 10, 60, 70))])
+    second = adapter.update([det(Box(14, 10, 64, 70))])
 
     assert first[0][0] == second[0][0]
 
 
 def test_adapter_survives_a_frame_with_no_detections(adapter):
     """Empty frames still have to reach the tracker: that is how it ages tracks out."""
-    adapter.update([(Box(10, 10, 60, 70), 0.9)])
+    adapter.update([det(Box(10, 10, 60, 70))])
 
     tracks = adapter.update([])
 

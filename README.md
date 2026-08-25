@@ -128,14 +128,43 @@ obscura run footage.mp4 -o leaky.mp4 --single-pass
 | `--keep-audio` | off | Remux the source audio onto the output. Needs ffmpeg; warns if it is missing rather than failing silently. |
 | `--single-pass` | off | Baseline mode. Leaks. |
 
-### Web UI
+### Web UI: choosing who gets blurred
 
 ```bash
 pip install 'obscura[web]'
 obscura serve
 ```
 
-Drag a video onto `http://127.0.0.1:8000`, watch progress, download the result.
+Drop a video onto `http://127.0.0.1:8000` and the job stops at a review step
+instead of running straight through: a gallery of every person found in the
+footage, with two policies — *blur everyone except those I pick*, or *blur only
+those I pick*. Pick, choose a redaction style, render.
+
+This is what the two-pass design buys. Because nothing is rendered until the
+whole timeline exists, the selection is just a filter over it.
+
+**A track is not a person.** Someone who turns away, is occluded, or leaves and
+re-enters produces a fresh track each time; ten tracks for one person is
+ordinary. So each track is embedded with a face recognition model and matching
+tracks are merged before the gallery is shown. Otherwise you would be picking
+from forty thumbnails of six people, and missing one leaves that person exposed
+for part of the video.
+
+**The safety model inverts here, so the defaults lean the other way.** Blurring
+everyone fails safe: a mistake costs an over-blurred patch of wall. Blurring
+only *some* people fails open, because a face that cannot be matched confidently
+is a real person left identifiable. Any face that is too small, too low quality,
+or missing landmarks is therefore pinned to always-blur, shown locked in the
+gallery, and cannot be deselected under either policy. The review panel says how
+many were pinned.
+
+Clustering is tuned to under-merge rather than over-merge (`threshold`, default
+`0.45`). Splitting one person across two gallery entries is a nuisance; merging
+two people means deselecting one silently un-blurs the other.
+
+Selection is web-only. `obscura run` still blurs every face it finds, which is
+the right default for batch work — a scriptable scan/select/render split is the
+obvious next step, not something this build has.
 
 > The UI has no authentication and runs jobs as the local user. It is built for
 > one operator on `localhost`. Putting it on a network without an auth layer in
@@ -165,6 +194,10 @@ Mount a volume at `/models` to keep downloaded weights between runs.
 - **Crowds degrade tracking.** Dense scenes produce identity switches; the
   redaction still lands, but healing across a switch can drag a box between two
   people.
+- **Selective redaction can only be as good as the recognition.** Profile-only
+  appearances, heavy occlusion and small faces cluster poorly. The always-blur
+  pin is the backstop, but if you need a guarantee rather than a good default,
+  blur everyone.
 - **Two decode passes** cost roughly 15% over a streaming design. That is the
   price of hindsight.
 

@@ -20,6 +20,7 @@ from . import redact, video
 from .config import RunConfig
 from .detect import Detector, UnifaceDetector
 from .geometry import Box
+from .identity import Person, TrackSampler, build_people, build_recognizer, embed
 from .timeline import FrameIndex, TrackTimeline, index_from_detections
 from .track import Tracker
 from .track import build as build_tracker
@@ -77,19 +78,31 @@ def scan(
     tracker: Tracker,
     meta: VideoMeta | None = None,
     progress: Progress = _noop,
+    sampler: TrackSampler | None = None,
 ) -> ScanResult:
-    """Pass 1: detect and track, retaining geometry only."""
+    """Pass 1: detect and track, retaining geometry only.
+
+    With a ``sampler``, one representative crop per track is kept as well, so a
+    reviewer can later be shown who is in the footage.
+    """
     meta = meta or video.probe(path)
     timeline = TrackTimeline()
     raw: list[list[Box]] = []
 
     for frame_index, frame in enumerate(video.frames(path)):
         detections = detector.detect(frame)
-        raw.append([box for box, _ in detections])
+        raw.append([d.box for d in detections])
         tracks = tracker.update(detections)
         predicted_ids = getattr(tracker, "predicted_ids", frozenset())
         for track_id, box in tracks:
-            timeline.add(frame_index, track_id, box, predicted=track_id in predicted_ids)
+            predicted = track_id in predicted_ids
+            timeline.add(frame_index, track_id, box, predicted=predicted)
+            # Predicted boxes have no detection behind them, usually because the
+            # face was not visible on that frame. They make poor gallery
+            # thumbnails and carry no landmarks to align an embedding with, so
+            # the reviewer is shown frames where the face was actually seen.
+            if sampler is not None and not predicted:
+                sampler.observe(frame, frame_index, track_id, box, detections)
         progress("scan", frame_index + 1, meta.n_frames)
 
     # Trust the decoded count over the container's claim.
@@ -113,10 +126,45 @@ def render(
             progress("render", frame_index + 1, meta.n_frames)
 
 
-def build_index(result: ScanResult, cfg: RunConfig) -> FrameIndex:
+def build_index(result: ScanResult, cfg: RunConfig, only: set[int] | None = None) -> FrameIndex:
     if cfg.single_pass:
+        # The baseline has no track identities, so it cannot be filtered; there
+        # is nothing to attach a selection to.
         return index_from_detections(result.raw, result.meta.size, cfg.heal)
-    return result.timeline.heal(result.meta.n_frames, result.meta.size, cfg.heal)
+    return result.timeline.heal(result.meta.n_frames, result.meta.size, cfg.heal, only)
+
+
+_AUTO = object()
+"""Sentinel: build the recognizer from config rather than using a supplied one."""
+
+
+def review(
+    result: ScanResult,
+    cfg: RunConfig,
+    sampler: TrackSampler,
+    recognizer: object = _AUTO,
+) -> tuple[list[Person], list[str]]:
+    """Group the scanned tracks into people for a reviewer to choose between."""
+    warnings: list[str] = []
+    if recognizer is _AUTO:
+        recognizer = build_recognizer(cfg.identity)
+    if recognizer is None:
+        warnings.append(
+            "No face recognition model is available, so faces could not be matched "
+            "to people. Every face is pinned to always-blur."
+        )
+
+    samples = sampler.samples()
+    embed(samples, recognizer)
+    people = build_people(result.timeline.spans(), samples, cfg.identity)
+
+    pinned = sum(1 for person in people if person.always_redact)
+    if pinned and recognizer is not None:
+        warnings.append(
+            f"{pinned} of {len(people)} faces could not be identified reliably and "
+            "will be blurred whatever you select."
+        )
+    return people, warnings
 
 
 def process(
@@ -126,6 +174,7 @@ def process(
     detector: Detector | None = None,
     tracker: Tracker | None = None,
     progress: Progress = _noop,
+    only: set[int] | None = None,
 ) -> RunReport:
     """Redact one video end to end."""
     meta = video.probe(source)
@@ -136,7 +185,24 @@ def process(
     result = scan(source, detector, tracker, meta, progress)
     scan_seconds = time.perf_counter() - started
 
-    index = build_index(result, cfg)
+    return render_scan(source, destination, result, cfg, scan_seconds, progress, only)
+
+
+def render_scan(
+    source: Path,
+    destination: Path,
+    result: ScanResult,
+    cfg: RunConfig,
+    scan_seconds: float = 0.0,
+    progress: Progress = _noop,
+    only: set[int] | None = None,
+) -> RunReport:
+    """Everything after the scan: build the index, render, remux, report.
+
+    Split out so a reviewer can sit between the two phases -- the web UI scans,
+    shows the people it found, and calls this once a selection is made.
+    """
+    index = build_index(result, cfg, only)
 
     warnings: list[str] = []
     target = destination

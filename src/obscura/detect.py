@@ -12,6 +12,7 @@ import numpy as np
 
 from .config import DetectConfig
 from .geometry import Box
+from .types import Detection
 
 MODELS = {
     "retinaface": ("uniface.detection", "RetinaFace"),
@@ -22,17 +23,17 @@ MODELS = {
 
 
 class Detector(Protocol):
-    def detect(self, frame: np.ndarray) -> list[tuple[Box, float]]: ...
+    def detect(self, frame: np.ndarray) -> list[Detection]: ...
 
 
 class UnifaceDetector:
-    """Wraps a uniface detector, returning ``(box, score)`` pairs."""
+    """Wraps a uniface detector, returning this package's ``Detection`` type."""
 
     def __init__(self, cfg: DetectConfig) -> None:
         self._cfg = cfg
         self._model = _build(cfg)
 
-    def detect(self, frame: np.ndarray) -> list[tuple[Box, float]]:
+    def detect(self, frame: np.ndarray) -> list[Detection]:
         results = []
         for face in self._model.detect(frame):
             # The model already applies the threshold; re-checking costs nothing
@@ -40,7 +41,7 @@ class UnifaceDetector:
             score = float(getattr(face, "confidence", 1.0))
             if score < self._cfg.conf:
                 continue
-            results.append((_to_box(face), score))
+            results.append(Detection(box=_to_box(face), score=score, landmarks=_to_landmarks(face)))
         return results
 
 
@@ -90,3 +91,16 @@ def _to_box(face) -> Box:
         raise ValueError(f"Detector returned a malformed bbox: {raw!r}")
     x1, y1, x2, y2 = values
     return Box(min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+
+
+def _to_landmarks(face) -> np.ndarray | None:
+    """Read the 5-point landmark set, or None if this detector omits it.
+
+    Landmarks are optional here: without them a face can still be redacted, it
+    just cannot be recognised, so the person ends up in the always-blur bucket.
+    """
+    raw = getattr(face, "landmarks", None)
+    if raw is None:
+        return None
+    points = np.asarray(raw, dtype=np.float32).reshape(-1, 2)
+    return points[:5] if points.shape[0] >= 5 else None

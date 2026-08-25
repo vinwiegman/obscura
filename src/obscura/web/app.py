@@ -1,4 +1,7 @@
-"""A small FastAPI front end: drop a video in, poll progress, download the result.
+"""A small FastAPI front end for the scan -> review -> render workflow.
+
+A job pauses at ``review`` with a gallery of the people found in the footage.
+The reviewer picks who to protect, and only then is anything rendered.
 
 Jobs live in memory and files in a temp directory, which is the right amount of
 machinery for a single-operator tool. Nothing here is safe to expose to a
@@ -10,20 +13,27 @@ from __future__ import annotations
 import shutil
 import tempfile
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import Body, FastAPI, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
-from ..config import DetectConfig, HealConfig, RedactStyle, RunConfig
-from ..pipeline import process
-from ..video import VIDEO_SUFFIXES
+from ..config import DetectConfig, HealConfig, IdentityConfig, RedactStyle, RunConfig
+from ..detect import UnifaceDetector
+from ..identity import Person, TrackSampler, tracks_to_redact
+from ..pipeline import ScanResult, render_scan, review, scan
+from ..track import build as build_tracker
+from ..video import VIDEO_SUFFIXES, probe
 
 MAX_UPLOAD_BYTES = 2 * 1024**3  # 2 GiB
 STATIC = Path(__file__).parent / "static"
+METHODS = {"blur", "pixelate", "fill"}
+SHAPES = {"ellipse", "rect"}
+POLICIES = {"except", "only"}
 
 app = FastAPI(title="Obscura", docs_url="/api/docs")
 
@@ -37,13 +47,19 @@ _workspace = Path(tempfile.mkdtemp(prefix="obscura-"))
 class Job:
     id: str
     name: str
-    status: str = "queued"  # queued | scanning | rendering | done | failed
+    status: str = "queued"
+    """queued | scanning | review | rendering | done | failed"""
+
     current: int = 0
     total: int = 0
     error: str | None = None
+    warnings: list[str] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+    people: list[Person] = field(default_factory=list)
     source: Path | None = None
     output: Path | None = None
+    scan_result: ScanResult | None = None
+    cfg: RunConfig | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -53,7 +69,9 @@ class Job:
             "current": self.current,
             "total": self.total,
             "error": self.error,
+            "warnings": self.warnings,
             "summary": self.summary,
+            "people": [person.as_dict() for person in self.people],
         }
 
 
@@ -63,21 +81,11 @@ def index() -> str:
 
 
 @app.post("/api/jobs")
-async def create_job(
-    file: UploadFile,
-    method: str = Form("blur"),
-    shape: str = Form("ellipse"),
-    margin: float = Form(0.18),
-    strength: float = Form(0.35),
-    keep_audio: bool = Form(False),
-) -> dict:
+async def create_job(file: UploadFile, conf: float = Form(0.5)) -> dict:
+    """Upload a video and start the scan. Redaction options come later."""
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in VIDEO_SUFFIXES:
         raise HTTPException(400, f"Unsupported file type {suffix!r}")
-    if method not in {"blur", "pixelate", "fill"}:
-        raise HTTPException(400, f"Unknown method {method!r}")
-    if shape not in {"ellipse", "rect"}:
-        raise HTTPException(400, f"Unknown shape {shape!r}")
 
     job_id = uuid.uuid4().hex
     directory = _workspace / job_id
@@ -95,22 +103,76 @@ async def create_job(
 
     job = Job(id=job_id, name=file.filename or source.name, source=source)
     job.output = directory / f"redacted{suffix}"
+    job.cfg = RunConfig(
+        detect=DetectConfig(conf=conf),
+        heal=HealConfig(),
+        identity=IdentityConfig(enabled=True),
+    )
     with _lock:
         _jobs[job_id] = job
 
-    cfg = RunConfig(
-        detect=DetectConfig(),
-        heal=HealConfig(margin=margin),
-        style=RedactStyle(method=method, shape=shape, strength=strength),
-        keep_audio=keep_audio,
-    )
-    _pool.submit(_run, job, cfg)
+    _pool.submit(_scan_job, job)
     return job.as_dict()
 
 
 @app.get("/api/jobs/{job_id}")
 def read_job(job_id: str) -> dict:
     return _get(job_id).as_dict()
+
+
+@app.get("/api/jobs/{job_id}/people/{person_id}/thumbnail")
+def thumbnail(job_id: str, person_id: int) -> Response:
+    job = _get(job_id)
+    for person in job.people:
+        if person.id == person_id and person.thumbnail:
+            # Immutable for the life of the job, so let the browser keep it.
+            return Response(
+                person.thumbnail,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "private, max-age=3600"},
+            )
+    raise HTTPException(404, "No thumbnail for that person")
+
+
+@app.post("/api/jobs/{job_id}/render")
+def start_render(job_id: str, body: dict = Body(default_factory=dict)) -> dict:
+    """Apply a reviewer's selection and render the video."""
+    job = _get(job_id)
+    if job.status != "review":
+        raise HTTPException(409, f"Job is {job.status}, not awaiting review")
+
+    policy = str(body.get("policy", "except"))
+    if policy not in POLICIES:
+        raise HTTPException(400, f"Unknown policy {policy!r}")
+    method = str(body.get("method", "blur"))
+    if method not in METHODS:
+        raise HTTPException(400, f"Unknown method {method!r}")
+    shape = str(body.get("shape", "ellipse"))
+    if shape not in SHAPES:
+        raise HTTPException(400, f"Unknown shape {shape!r}")
+
+    try:
+        selected = {int(value) for value in body.get("selected", [])}
+    except (TypeError, ValueError):
+        raise HTTPException(400, "selected must be a list of person ids") from None
+
+    known = {person.id for person in job.people}
+    if not selected <= known:
+        raise HTTPException(400, f"Unknown person ids: {sorted(selected - known)}")
+
+    job.cfg.style = RedactStyle(
+        method=method,
+        shape=shape,
+        strength=float(body.get("strength", 0.35)),
+    )
+    job.cfg.heal.margin = float(body.get("margin", 0.18))
+    job.cfg.keep_audio = bool(body.get("keep_audio", False))
+
+    redact = tracks_to_redact(job.people, selected, policy)
+    job.status = "rendering"
+    job.current = job.total = 0
+    _pool.submit(_render_job, job, redact)
+    return job.as_dict()
 
 
 @app.get("/api/jobs/{job_id}/download")
@@ -144,25 +206,62 @@ def _get(job_id: str) -> Job:
     return job
 
 
-def _run(job: Job, cfg: RunConfig) -> None:
-    def progress(stage: str, current: int, total: int) -> None:
-        job.status = "scanning" if stage == "scan" else "rendering"
+def _progress(job: Job, stage: str) -> callable:
+    def report(_stage: str, current: int, total: int) -> None:
+        job.status = stage
         job.current, job.total = current, total
 
+    return report
+
+
+def _scan_job(job: Job) -> None:
     try:
-        report = process(job.source, job.output, cfg, progress=progress)
+        job.status = "scanning"
+        sampler = TrackSampler(job.cfg.identity)
+        meta = probe(job.source)
+        started = time.perf_counter()
+        result = scan(
+            job.source,
+            UnifaceDetector(job.cfg.detect),
+            build_tracker(job.cfg.track),
+            meta,
+            _progress(job, "scanning"),
+            sampler,
+        )
+        job.scan_result = result
+        job.summary = {"scan_seconds": round(time.perf_counter() - started, 2)}
+        job.people, job.warnings = review(result, job.cfg, sampler)
+        job.status = "review"
+    except Exception as exc:
+        job.status = "failed"
+        job.error = str(exc)
+
+
+def _render_job(job: Job, redact: set[int]) -> None:
+    try:
+        report = render_scan(
+            job.source,
+            job.output,
+            job.scan_result,
+            job.cfg,
+            job.summary.get("scan_seconds", 0.0),
+            _progress(job, "rendering"),
+            redact,
+        )
     except Exception as exc:
         job.status = "failed"
         job.error = str(exc)
         return
 
+    job.warnings = job.warnings + report.warnings
     job.summary = {
         "frames": report.meta.n_frames,
         "tracks": report.n_tracks,
+        "people": len(job.people),
+        "redacted_tracks": len(redact),
         "detections": report.n_detections,
         "redactions": report.n_redactions,
         "healed": report.n_redactions - report.n_detections,
         "fps": round(report.fps, 1),
-        "warnings": report.warnings,
     }
     job.status = "done"
