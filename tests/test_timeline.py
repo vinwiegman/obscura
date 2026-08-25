@@ -146,6 +146,64 @@ def test_plausible_track_fragments_are_stitched_before_interpolation(bare):
     assert index[3][0] == Box(6, 0, 26, 20)
 
 
+def test_selection_covers_every_track_a_stitched_group_absorbed(bare):
+    """Stitching runs before the filter, so a group spans several track ids.
+
+    Selecting any one of them must redact the whole group: if motion stitching
+    wrongly joined two people, over-blurring is survivable and leaving one
+    visible is not.
+    """
+    timeline = timeline_with({0: Box(0, 0, 20, 20), 1: Box(2, 0, 22, 20)}, track_id=1)
+    timeline.add(4, 99, Box(8, 0, 28, 20))
+    timeline.add(5, 99, Box(10, 0, 30, 20))
+
+    from_first = timeline.heal(6, (200, 100), bare, only={1})
+    from_second = timeline.heal(6, (200, 100), bare, only={99})
+
+    assert [len(boxes) for boxes in from_first] == [1, 1, 1, 1, 1, 1]
+    assert [len(boxes) for boxes in from_second] == [1, 1, 1, 1, 1, 1]
+
+
+def test_selecting_an_unrelated_track_redacts_nothing(bare):
+    timeline = timeline_with({0: Box(0, 0, 20, 20), 1: Box(2, 0, 22, 20)}, track_id=1)
+
+    index = timeline.heal(3, (200, 100), bare, only={4242})
+
+    assert all(not boxes for boxes in index)
+
+
+def test_unstitched_tracks_are_selected_independently(bare):
+    """Two people far apart stay separate, so one can be kept visible."""
+    timeline = timeline_with({0: Box(0, 0, 20, 20), 1: Box(1, 0, 21, 20)}, track_id=1)
+    timeline.add(0, 2, Box(300, 300, 320, 320))
+    timeline.add(1, 2, Box(301, 300, 321, 320))
+
+    index = timeline.heal(2, (400, 400), bare, only={2})
+
+    assert [len(boxes) for boxes in index] == [1, 1]
+    assert index[0][0].x1 >= 300
+
+
+def test_spans_include_prediction_only_tracks():
+    """A track missing from spans() would belong to no person and never be
+    selectable -- a silent way to leak a face."""
+    timeline = TrackTimeline()
+    timeline.add(3, 7, Box(0, 0, 10, 10), predicted=True)
+    timeline.add(4, 7, Box(1, 0, 11, 10), predicted=True)
+
+    spans = timeline.spans()
+
+    assert spans[7] == (2, 3, 4)
+
+
+def test_spans_count_observed_and_predicted_frames_together():
+    timeline = TrackTimeline()
+    timeline.add(0, 1, Box(0, 0, 10, 10))
+    timeline.add(1, 1, Box(1, 0, 11, 10), predicted=True)
+
+    assert timeline.spans()[1] == (2, 0, 1)
+
+
 def test_implausibly_distant_later_track_is_not_stitched(bare):
     timeline = timeline_with({0: Box(0, 0, 20, 20)}, track_id=1)
     timeline.add(3, 2, Box(300, 300, 320, 320))
